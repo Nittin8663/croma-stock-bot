@@ -6,84 +6,86 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 from notifier import send_alert
 
-# List of realistic user agents
-USER_AGENTS = [
+# Chrome-only user agents (updated July 2025)
+CHROME_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15',
-    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36'
 ]
 
 def load_products():
     with open('products.json') as f:
         return json.load(f)
 
-def make_request(url, retries=3):
-    """Make request with retries and random delays"""
+def make_chrome_request(url, retries=3):
+    """Make request with Chrome-specific headers"""
     for attempt in range(retries):
         try:
             headers = {
-                'User-Agent': random.choice(USER_AGENTS),
+                'User-Agent': random.choice(CHROME_AGENTS),
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.9',
-                'Referer': 'https://www.croma.com/',
+                'Sec-Ch-Ua': '"Chromium";v="125", "Google Chrome";v="125"',
+                'Sec-Ch-Ua-Mobile': '?0',
+                'Sec-Ch-Ua-Platform': '"Windows"',
                 'Sec-Fetch-Dest': 'document',
                 'Sec-Fetch-Mode': 'navigate',
                 'Sec-Fetch-Site': 'same-origin',
-                'DNT': '1'
+                'Sec-Fetch-User': '?1',
+                'Upgrade-Insecure-Requests': '1'
             }
             
-            # Random delay between 1-3 seconds
-            time.sleep(random.uniform(1, 3))
+            # Random delay with Chrome-like pattern
+            time.sleep(random.uniform(1.2, 2.8))
             
-            response = requests.get(url, headers=headers, timeout=15)
+            response = requests.get(url, 
+                                 headers=headers,
+                                 timeout=15,
+                                 cookies={'croma_region': 'IN'})  # Simulate location
+            
+            # Chrome-like status code handling
+            if response.status_code == 403:
+                raise requests.exceptions.HTTPError("403 Forbidden (Chrome)")
             response.raise_for_status()
             return response
             
         except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 403:
-                print(f"⚠️ Blocked attempt {attempt + 1}/{retries}. Retrying...")
-                time.sleep(5)  # Longer delay if blocked
+            if "403" in str(e):
+                print(f"⚠️ Chrome blocked (attempt {attempt+1}). Waiting...")
+                time.sleep(random.uniform(5, 8))  # Longer Chrome-like delay
                 continue
             raise
-    raise Exception(f"Failed after {retries} attempts")
+    raise Exception(f"Chrome failed after {retries} attempts")
 
-def check_stock(url, debug=False):
+def check_stock(url):
     try:
-        response = make_request(url)
+        response = make_chrome_request(url)
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Debug mode
-        if debug:
-            with open('debug_page.html', 'w', encoding='utf-8') as f:
-                f.write(response.text)
-            print("⚠️ Debug: Saved page HTML to debug_page.html")
-
-        # 1. Check main availability indicator
-        availability = soup.find('div', {'data-testid': 'pdp-stock-status'})
-        if availability:
-            status_text = availability.get_text().strip().lower()
-            if 'in stock' in status_text:
-                return True, "✅ IN STOCK"
-            return False, f"❌ {availability.get_text().strip().upper()}"
-
-        # 2. Check price block (secondary indicator)
-        price = soup.find('span', {'data-testid': 'pdp-offer-price'})
-        if price:
-            return False, "⚠️ PRICE SHOWN BUT STOCK UNCERTAIN"
-
-        return False, "⚠️ UNABLE TO DETERMINE STOCK STATUS"
+        # Chrome-specific element detection
+        stock_data = soup.find('div', {'data-testid': 'pdp-stock-status'}) or \
+                   soup.find('button', {'data-testid': 'add-to-cart'})
+        
+        if stock_data:
+            text = stock_data.get_text().strip().lower()
+            if any(x in text for x in ['in stock', 'add to cart']):
+                return True, "✅ CHROME DETECTED: IN STOCK"
+            return False, f"❌ CHROME DETECTED: {stock_data.get_text().strip().upper()}"
+        
+        return False, "⚠️ CHROME: STOCK STATUS UNKNOWN"
 
     except Exception as e:
-        return False, f"🚨 ERROR: {str(e)}"
+        return False, f"🚨 CHROME ERROR: {str(e)}"
 
 def monitor_products():
     products = load_products()
     print("\n" + "="*70)
-    print(f"🛒 CROMA STOCK MONITOR - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"🛒 CHROME STOCK MONITOR - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*70 + "\n")
     
     while True:
         for product in products:
-            print(f"\n🔍 Checking: {product['name']}")
+            print(f"\n🔍 Chrome Checking: {product['name']}")
             print(f"🌐 URL: {product['url']}")
             
             is_available, status_msg = check_stock(product['url'])
@@ -91,11 +93,13 @@ def monitor_products():
             print(f"⏰ Last Check: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             
             if is_available:
-                print("\n🔥🔥🔥 PRODUCT AVAILABLE! SENDING ALERT...")
+                print("\n🔥 CHROME ALERT: PRODUCT AVAILABLE!")
                 send_alert(product['name'], product['url'])
             
-            print("\n" + "-"*70)
-            time.sleep(max(product.get('check_interval', 30), random.uniform(25, 35)))
+            # Chrome-like random delay (25-40s)
+            delay = random.uniform(25, 40)
+            print(f"⏳ Next check in {delay:.1f}s...")
+            time.sleep(delay)
 
 if __name__ == "__main__":
     monitor_products()
